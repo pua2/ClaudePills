@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Claude Session Monitor</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ── Fake desktop (shows iTerm windows so hide/show is visible) ── -->
+<div class="fake-desktop"></div>
+
+<!-- ── Toast notification ── -->
+<div class="toast" id="toast"></div>
+
+<!-- ── Edge Dock ── -->
+<div id="edge-dock">
+  <!-- Pills injected by app.js -->
+
+  <!-- Footer: + button + drag handle -->
+  <div class="dock-footer">
+    <button class="new-terminal-btn" id="new-terminal-btn" title="Open new terminal">+</button>
+    <div class="dock-handle">
+      <span></span><span></span><span></span>
+    </div>
+  </div>
+</div>
+
+<!-- ── Demo Controls ── -->
+<div id="demo-controls">
+  <h3>Demo controls — hover pills on the right edge to interact</h3>
+  <div id="ctrl-rows"></div>
+  <div class="ctrl-divider"></div>
+  <div class="ctrl-footer">
+    <button class="add-btn" id="add-btn">+ Add session</button>
+    <span class="hint">Click pill = focus terminal · ↗ = focus · − = hide (no Dock clutter) · drag ⠿ to reposition</span>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,27 @@
+# Swift / Xcode
+.build/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+*.dSYM.zip
+*.dSYM
+Package.resolved
+
+# Node
+node_modules/
+npm-debug.log*
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Claude local settings
+.claude/settings.local.json

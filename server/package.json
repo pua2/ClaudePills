@@ -1,0 +1,12 @@
+{
+  "name": "claudepills-server",
+  "version": "0.1.0",
+  "description": "Local WebSocket relay for ClaudePills session status",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
