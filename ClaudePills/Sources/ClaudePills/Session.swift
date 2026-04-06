@@ -78,6 +78,8 @@ struct Session: Identifiable, Equatable {
     var terminalSessionId: String?
     var pillColor: PillColor = .none
     var startedAt: Date = Date()
+    /// Timestamp of the last server update (hook event) for this session.
+    var lastServerUpdate: Date = Date()
 
     var displayState: SessionState {
         isHidden ? .hidden : serverState
