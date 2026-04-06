@@ -13,7 +13,7 @@ struct HelpView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("ClaudePills")
                             .font(.system(size: 22, weight: .bold))
-                        Text("v0.1")
+                        Text("v\(AppDelegate.appVersion)")
                             .font(.system(size: 13))
                             .foregroundColor(.secondary)
                     }
