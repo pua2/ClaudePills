@@ -26,6 +26,8 @@ func log(_ msg: String) {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    static let appVersion = "0.1.0"
+
     private var panel: FloatingPanel!
     private var statusItem: NSStatusItem!
     private let dockYKey = "dockPanelY"
@@ -33,6 +35,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var sessionObserver: Any?
     private var autoHideEnabled = UserDefaults.standard.bool(forKey: "autoHidePanel")
     private var helpWindow: NSWindow?
+    private var debugWindow: NSWindow?
+
+    deinit {
+        NotificationCenter.default.removeObserver(self)
+        if let observer = sessionObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         log("applicationDidFinishLaunching")
@@ -281,6 +291,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Refresh", action: #selector(refresh), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Help", action: #selector(showHelp), keyEquivalent: "?"))
+        menu.addItem(NSMenuItem(title: "Copy Debug Info", action: #selector(copyDebugInfo), keyEquivalent: "d"))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit ClaudePills", action: #selector(quit), keyEquivalent: "q"))
         statusItem.menu = menu
@@ -355,7 +366,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         helpWindow = window
     }
 
-    @objc private func noop() {}
+    // MARK: - Debug info
+
+    private func generateDebugInfo() -> String {
+        let processInfo = ProcessInfo.processInfo
+        let osVersion = processInfo.operatingSystemVersionString
+        let uptime = Int(processInfo.systemUptime)
+        let uptimeStr = "\(uptime / 3600)h \((uptime % 3600) / 60)m"
+
+        let terminal = TerminalBridge.selected
+        let terminalMode = TerminalBridge.isAutomatic ? "Automatic (\(terminal.displayName))" : terminal.displayName
+        let dockSide = panel?.dockSide.rawValue ?? "unknown"
+        let launchAtLogin = SMAppService.mainApp.status == .enabled ? "ON" : "OFF"
+        let sessions = SessionManager.shared.sessions
+        let visible = SessionManager.shared.visibleSessions
+
+        let sessionLines = sessions.map { s in
+            let state = s.displayState.label
+            let tool = s.lastTool.map { " (\($0))" } ?? ""
+            let termId = s.terminalSessionId ?? "none"
+            return "  - \(s.label): \(state)\(tool) [term: \(termId)]"
+        }.joined(separator: "\n")
+
+        // Read last 20 lines of log
+        let logPath = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".claudepills/app.log").path
+        var recentLogs = "(no logs)"
+        if let logData = FileManager.default.contents(atPath: logPath),
+           let logStr = String(data: logData, encoding: .utf8) {
+            let lines = logStr.split(separator: "\n", omittingEmptySubsequences: false)
+            let tail = lines.suffix(20)
+            recentLogs = tail.joined(separator: "\n")
+        }
+
+        let dateFormatter = ISO8601DateFormatter()
+        let timestamp = dateFormatter.string(from: Date())
+
+        return """
+        === ClaudePills Debug Info ===
+        Version: \(Self.appVersion)
+        Timestamp: \(timestamp)
+        macOS: \(osVersion)
+        System Uptime: \(uptimeStr)
+
+        --- Settings ---
+        Terminal: \(terminalMode)
+        Dock Side: \(dockSide)
+        Auto-Hide: \(autoHideEnabled ? "ON" : "OFF")
+        Launch at Login: \(launchAtLogin)
+
+        --- Sessions (\(sessions.count) total, \(visible.count) visible) ---
+        \(sessionLines.isEmpty ? "  (none)" : sessionLines)
+
+        --- Recent Logs ---
+        \(recentLogs)
+        """
+    }
+
+    @objc private func copyDebugInfo() {
+        let info = generateDebugInfo()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(info, forType: .string)
+        log("Debug info copied to clipboard")
+    }
 
     @objc private func terminalDidChange() {
         rebuildMenu()
