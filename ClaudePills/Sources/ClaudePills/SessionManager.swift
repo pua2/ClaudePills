@@ -137,13 +137,13 @@ final class SessionManager: ObservableObject {
         }
     }
 
-    /// Returns true if the session's PID file exists and the process is still alive.
-    private func isSessionAlive(_ sessionId: String) -> Bool {
+    /// Returns the PID for a session from ~/.claude/sessions/*.json, or nil if not found.
+    private func pidForSession(_ sessionId: String) -> Int? {
         let sessionDir = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent(".claude/sessions")
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: sessionDir, includingPropertiesForKeys: nil
-        ) else { return false }
+        ) else { return nil }
 
         for file in files where file.pathExtension == "json" {
             guard let data = try? Data(contentsOf: file),
@@ -151,9 +151,29 @@ final class SessionManager: ObservableObject {
                   let pid = obj["pid"] as? Int,
                   let sid = obj["sessionId"] as? String,
                   sid == sessionId else { continue }
-            return kill(Int32(pid), 0) == 0
+            return pid
         }
-        return false
+        return nil
+    }
+
+    /// Returns true if the session's PID file exists and the process is still alive.
+    private func isSessionAlive(_ sessionId: String) -> Bool {
+        guard let pid = pidForSession(sessionId) else { return false }
+        return kill(Int32(pid), 0) == 0
+    }
+
+    /// Returns true if the given PID has child processes (tool is actively executing).
+    private static func hasChildProcesses(pid: Int) -> Bool {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        proc.arguments = ["-P", "\(pid)"]
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do { try proc.run() } catch { return false }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        return !data.isEmpty
     }
 
     // MARK: - Notifications
@@ -612,7 +632,14 @@ final class SessionManager: ObservableObject {
 
         for idx in sessions.indices {
             if pendingSessions.contains(sessions[idx].id) && sessions[idx].serverState == .running {
-                sessions[idx].serverState = .question
+                // Before marking as question, check if a tool is actively executing.
+                // If the Claude process has child processes (e.g. running Bash), the tool
+                // is in progress — not waiting for user permission.
+                if let pid = pidForSession(sessions[idx].id), Self.hasChildProcesses(pid: pid) {
+                    // Tool is actively running — don't override to question
+                } else {
+                    sessions[idx].serverState = .question
+                }
             } else if sessions[idx].serverState == .question && !pendingSessions.contains(sessions[idx].id) {
                 sessions[idx].serverState = .running
             }
