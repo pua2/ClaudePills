@@ -5,10 +5,6 @@
 
 A floating macOS dock that shows live status pills for your [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions. See at a glance which sessions are running, waiting, or need input — without switching windows.
 
-<p align="center">
-  <img src="assets/hero.png" alt="ClaudePills showing four sessions with different states" width="600">
-</p>
-
 ## Features
 
 ### Live Session Pills
