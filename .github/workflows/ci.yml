@@ -1,0 +1,21 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Swift package
+        run: swift build --package-path ClaudePills
+
+      - name: Verify server dependencies
+        run: |
+          cd server
+          npm ci
