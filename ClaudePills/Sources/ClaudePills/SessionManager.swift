@@ -120,6 +120,7 @@ final class SessionManager: ObservableObject {
             let oldState = sessions[idx].serverState
             sessions[idx].serverState = state
             sessions[idx].lastTool = ss.lastTool
+            sessions[idx].lastServerUpdate = Date()
             if let sid = terminalId { sessions[idx].terminalSessionId = sid }
 
             if oldState != state {
@@ -559,6 +560,7 @@ final class SessionManager: ObservableObject {
                 self.removeDeadPIDSessions()
                 self.removeFinishedIfDead()
                 self.checkQuestionMarkers()
+                self.checkStaleRunningSessions()
 
                 if !deadByTTY.isEmpty {
                     self.sessions.removeAll { deadByTTY.contains($0.id) }
@@ -651,6 +653,32 @@ final class SessionManager: ObservableObject {
             } else if sessions[idx].serverState == .question && !pendingSessions.contains(sessions[idx].id) {
                 sessions[idx].serverState = .running
             }
+        }
+    }
+
+    // MARK: - Stale running detection
+
+    /// If a session has been "running" for over 2 minutes without any new server
+    /// update and its process has no active child processes, it's likely stale —
+    /// e.g. hit a usage limit, crashed, or the Stop hook didn't fire.
+    /// Transitions stale sessions to .waiting so the pill reflects reality.
+    private let staleRunningThreshold: TimeInterval = 120
+
+    private func checkStaleRunningSessions() {
+        let now = Date()
+        for idx in sessions.indices {
+            guard sessions[idx].serverState == .running else { continue }
+            let elapsed = now.timeIntervalSince(sessions[idx].lastServerUpdate)
+            guard elapsed >= staleRunningThreshold else { continue }
+
+            // Verify the process isn't actually doing work
+            if let pid = pidForSession(sessions[idx].id), Self.hasChildProcesses(pid: pid) {
+                continue
+            }
+
+            sessions[idx].serverState = .waiting
+            sessions[idx].lastTool = nil
+            log("Session \(sessions[idx].label) marked stale after \(Int(elapsed))s without update")
         }
     }
 
