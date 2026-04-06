@@ -21,6 +21,12 @@ final class SessionManager: ObservableObject {
     private let serverURL = URL(string: "ws://127.0.0.1:3737")!
     private var projectCounts: [String: Int] = [:]
 
+    deinit {
+        pollTimer?.invalidate()
+        stopSessionDirectoryWatcher()
+        disconnect()
+    }
+
     // MARK: - Connection
 
     func connect() {
@@ -55,6 +61,8 @@ final class SessionManager: ObservableObject {
     func disconnect() {
         wsTask?.cancel(with: .goingAway, reason: nil)
         wsTask = nil
+        urlSession?.invalidateAndCancel()
+        urlSession = nil
     }
 
     private func listen() {
