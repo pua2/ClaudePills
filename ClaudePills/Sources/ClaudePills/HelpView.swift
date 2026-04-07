@@ -65,6 +65,7 @@ struct HelpView: View {
                     tipRow("Dock the panel on the left or right edge of your screen.")
                     tipRow("Hide Pills hides the panel and grays out the menu bar icon. Click Show Pills to restore.")
                     tipRow("Restart Server wipes all stale sessions and reconnects fresh.")
+                    tipRow("Check for Updates fetches the latest from GitHub and installs if available.")
                     tipRow("Quit also stops the background server.")
                     tipRow("Launch at Login starts ClaudePills when you log in.")
                 }
