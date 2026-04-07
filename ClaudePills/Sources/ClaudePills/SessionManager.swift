@@ -20,6 +20,7 @@ final class SessionManager: ObservableObject {
     private var urlSession: URLSession?
     private let serverURL = URL(string: "ws://127.0.0.1:3737")!
     private var projectCounts: [String: Int] = [:]
+    private var hasReceivedSnapshot = false
 
     deinit {
         pollTimer?.invalidate()
@@ -45,8 +46,8 @@ final class SessionManager: ObservableObject {
         projectCounts.removeAll()
         missingCounts.removeAll()
         finishedCounts.removeAll()
+        hasReceivedSnapshot = false
         connect()
-        rescanActiveSessions()
         objectWillChange.send()
         log("Refresh: cleared all state and reconnected")
     }
@@ -95,9 +96,19 @@ final class SessionManager: ObservableObject {
         case "snapshot":
             guard let serverSessions = msg.sessions else { return }
             for ss in serverSessions { upsertSession(from: ss) }
+            if !hasReceivedSnapshot {
+                hasReceivedSnapshot = true
+                rescanActiveSessions()
+            }
         case "update":
             guard let ss = msg.session else { return }
             upsertSession(from: ss)
+        case "remove":
+            if let id = msg.sessionId {
+                sessions.removeAll { $0.id == id }
+                missingCounts.removeValue(forKey: id)
+                finishedCounts.removeValue(forKey: id)
+            }
         default:
             break
         }
@@ -116,12 +127,30 @@ final class SessionManager: ObservableObject {
             return Date()
         }()
 
+        // Deduplicate: remove older sessions sharing the same terminal
+        if let tid = terminalId, state == .running || state == .waiting {
+            sessions.removeAll { existing in
+                existing.id != ss.id &&
+                existing.terminalSessionId == tid &&
+                (existing.serverState == .complete || existing.serverState == .waiting)
+            }
+        }
+
+        // Deduplicate by PID: when a hook-based session arrives, remove any
+        // pending rescan session for the same Claude process.
+        if let pid = ss.claudePid {
+            sessions.removeAll { existing in
+                existing.id != ss.id && existing.pid == pid
+            }
+        }
+
         if let idx = sessions.firstIndex(where: { $0.id == ss.id }) {
             let oldState = sessions[idx].serverState
             sessions[idx].serverState = state
             sessions[idx].lastTool = ss.lastTool
             sessions[idx].lastServerUpdate = Date()
             if let sid = terminalId { sessions[idx].terminalSessionId = sid }
+            if let pid = ss.claudePid { sessions[idx].pid = pid }
 
             if oldState != state {
                 notifyIfFinished(session: sessions[idx], newState: state)
@@ -142,6 +171,7 @@ final class SessionManager: ObservableObject {
                 startedAt: startDate
             )
             session.pillColor = loadSavedColor(for: ss.id)
+            session.pid = ss.claudePid
             sessions.append(session)
         }
     }
@@ -165,8 +195,12 @@ final class SessionManager: ObservableObject {
         return nil
     }
 
-    /// Returns true if the session's PID file exists and the process is still alive.
-    private func isSessionAlive(_ sessionId: String) -> Bool {
+    /// Returns true if the session's process is still alive.
+    /// Checks the stored PID first (from hooks), falls back to session file lookup.
+    private func isSessionAlive(_ sessionId: String, storedPid: Int? = nil) -> Bool {
+        if let pid = storedPid {
+            return kill(Int32(pid), 0) == 0
+        }
         guard let pid = pidForSession(sessionId) else { return false }
         return kill(Int32(pid), 0) == 0
     }
@@ -216,6 +250,17 @@ final class SessionManager: ObservableObject {
     }
 
     // MARK: - Local actions
+
+    func removeSession(id: String) {
+        sessions.removeAll { $0.id == id }
+        missingCounts.removeValue(forKey: id)
+        finishedCounts.removeValue(forKey: id)
+        // Tell the server to remove it too
+        let url = URL(string: "http://127.0.0.1:3737/session/\(id)")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        URLSession.shared.dataTask(with: request).resume()
+    }
 
     func toggleHidden(id: String) {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
@@ -330,6 +375,8 @@ final class SessionManager: ObservableObject {
 
             guard kill(Int32(pid), 0) == 0 else { continue }
             guard !sessions.contains(where: { $0.id == sessionId }) else { continue }
+            // Skip if a hook-based session already tracks this PID
+            guard !sessions.contains(where: { $0.pid == pid }) else { continue }
 
             let terminalType = Self.detectTerminalType(for: pid)
 
@@ -358,6 +405,7 @@ final class SessionManager: ObservableObject {
                 startedAt: startDate
             )
             session.pillColor = loadSavedColor(for: sessionId)
+            session.pid = pid
             sessions.append(session)
         }
     }
@@ -645,7 +693,8 @@ final class SessionManager: ObservableObject {
                 // Before marking as question, check if a tool is actively executing.
                 // If the Claude process has child processes (e.g. running Bash), the tool
                 // is in progress — not waiting for user permission.
-                if let pid = pidForSession(sessions[idx].id), Self.hasChildProcesses(pid: pid) {
+                let pid = sessions[idx].pid ?? pidForSession(sessions[idx].id)
+                if let pid, Self.hasChildProcesses(pid: pid) {
                     // Tool is actively running — don't override to question
                 } else {
                     sessions[idx].serverState = .question
@@ -672,7 +721,8 @@ final class SessionManager: ObservableObject {
             guard elapsed >= staleRunningThreshold else { continue }
 
             // Verify the process isn't actually doing work
-            if let pid = pidForSession(sessions[idx].id), Self.hasChildProcesses(pid: pid) {
+            let pid = sessions[idx].pid ?? pidForSession(sessions[idx].id)
+            if let pid, Self.hasChildProcesses(pid: pid) {
                 continue
             }
 
@@ -687,7 +737,7 @@ final class SessionManager: ObservableObject {
         var toRemove: [String] = []
         for session in sessions {
             if session.serverState == .running || session.serverState == .question { continue }
-            if !isSessionAlive(session.id) {
+            if !isSessionAlive(session.id, storedPid: session.pid) {
                 let count = (finishedCounts[session.id] ?? 0) + 1
                 finishedCounts[session.id] = count
                 if count >= finishedThreshold {

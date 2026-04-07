@@ -65,6 +65,10 @@ struct DockView: View {
             onSetColor: { color in
                 manager.setColor(id: session.id, color: color)
             },
+            onClose: {
+                TerminalBridge.closeSession(terminalSessionId: session.terminalSessionId)
+                manager.removeSession(id: session.id)
+            },
             onMoveUp: isFirst ? nil : { manager.moveSessionUp(id: session.id) },
             onMoveDown: isLast ? nil : { manager.moveSessionDown(id: session.id) }
         )

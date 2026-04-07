@@ -131,6 +131,20 @@ enum TerminalBridge {
         }
     }
 
+    static func closeSession(terminalSessionId: String?) {
+        let terminal = selected
+        log("closeSession terminal=\(terminal.displayName) raw=\(terminalSessionId ?? "nil")")
+        guard let raw = terminalSessionId, !raw.isEmpty else { return }
+        if raw.hasPrefix("pending-") {
+            let tty = String(raw.dropFirst("pending-".count))
+            guard tty.hasPrefix("/dev/") else { return }
+            runOsascript(closeByTTYScript(terminal: terminal, tty: tty))
+        } else {
+            let sid = terminal.sessionUUID(from: raw)
+            runOsascript(terminal.closeScript(sessionId: sid))
+        }
+    }
+
     static func createNewWindow() {
         runOsascript(selected.newWindowScript())
     }
@@ -245,6 +259,28 @@ enum TerminalBridge {
             """
         case .terminal:
             return terminal.showScript(sessionId: tty)
+        }
+    }
+
+    private static func closeByTTYScript(terminal: TerminalType, tty: String) -> String {
+        switch terminal {
+        case .iterm2:
+            return """
+                tell application "iTerm2"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            repeat with s in sessions of t
+                                if tty of s is "\(tty)" then
+                                    close t
+                                    return
+                                end if
+                            end repeat
+                        end repeat
+                    end repeat
+                end tell
+            """
+        case .terminal:
+            return terminal.closeScript(sessionId: tty)
         }
     }
 

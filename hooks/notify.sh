@@ -21,11 +21,18 @@ else
   fi
 fi
 
-if [ -n "$TERM_SID" ]; then
+CLAUDE_PID="${PPID:-}"
+
+if [ -n "$TERM_SID" ] || [ -n "$CLAUDE_PID" ]; then
   PAYLOAD=$(echo "$PAYLOAD" | python3 -c "
 import sys, json
 d = json.load(sys.stdin)
-d['terminal_session_id'] = '${TERM_SID}'
+tid = '${TERM_SID}'
+if tid:
+    d['terminal_session_id'] = tid
+cpid = '${CLAUDE_PID}'
+if cpid:
+    d['claude_pid'] = int(cpid)
 json.dump(d, sys.stdout)
 " 2>/dev/null || echo "$PAYLOAD")
 fi

@@ -8,6 +8,7 @@ struct PillView: View {
     let onToggleHide: () -> Void
     let onRename: (String) -> Void
     let onSetColor: (PillColor) -> Void
+    var onClose: (() -> Void)?
     var onMoveUp: (() -> Void)?
     var onMoveDown: (() -> Void)?
 
@@ -118,6 +119,10 @@ struct PillView: View {
             }
             if let onMoveDown {
                 Button("Move Down") { onMoveDown() }
+            }
+            if let onClose {
+                Divider()
+                Button("Close Session") { onClose() }
             }
         }
     }

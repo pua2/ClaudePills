@@ -79,6 +79,21 @@ enum AppIcon {
         return image
     }
 
+    /// Generates a grayed-out version of the icon for the "pills hidden" state.
+    static func generateGrayed(size: CGFloat = 512) -> NSImage {
+        let original = generate(size: size)
+        let grayed = NSImage(size: original.size)
+        grayed.lockFocus()
+        original.draw(
+            in: NSRect(origin: .zero, size: original.size),
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 0.35
+        )
+        grayed.unlockFocus()
+        return grayed
+    }
+
     /// Sets the app icon in the dock (for when running as accessory app with temporary dock presence).
     static func setAsAppIcon() {
         NSApp.applicationIconImage = generate()

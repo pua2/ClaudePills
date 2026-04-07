@@ -33,7 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let dockYKey = "dockPanelY"
     private var hotkeyRefs: [EventHotKeyRef?] = []
     private var sessionObserver: Any?
-    private var autoHideEnabled = UserDefaults.standard.bool(forKey: "autoHidePanel")
+    private var pillsHidden = false
     private var helpWindow: NSWindow?
     private var debugWindow: NSWindow?
 
@@ -102,15 +102,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Auto-hide
 
     private func updatePanelVisibility() {
-        guard autoHideEnabled else {
+        if pillsHidden {
+            if panel.isVisible { panel.orderOut(nil) }
+        } else {
             if !panel.isVisible { panel.orderFrontRegardless() }
-            return
-        }
-        let hasVisible = !SessionManager.shared.visibleSessions.isEmpty
-        if hasVisible && !panel.isVisible {
-            panel.orderFrontRegardless()
-        } else if !hasVisible && panel.isVisible {
-            panel.orderOut(nil)
         }
     }
 
@@ -226,6 +221,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateMenuBarBadge() {
         guard let button = statusItem?.button else { return }
+        if pillsHidden {
+            let icon = AppIcon.generateGrayed(size: 36)
+            icon.size = NSSize(width: 18, height: 18)
+            button.image = icon
+            button.title = ""
+            return
+        }
         let count = SessionManager.shared.visibleSessions.count
         let icon = AppIcon.generate(size: 36)
         icon.size = NSSize(width: 18, height: 18)
@@ -280,9 +282,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Toggles
         menu.addItem(.separator())
 
-        let autoHideItem = NSMenuItem(title: "Auto-Hide Panel", action: #selector(toggleAutoHide), keyEquivalent: "")
-        autoHideItem.state = autoHideEnabled ? .on : .off
-        menu.addItem(autoHideItem)
+        let hideShowTitle = pillsHidden ? "Show Pills" : "Hide Pills"
+        let hideShowItem = NSMenuItem(title: hideShowTitle, action: #selector(togglePillsHidden), keyEquivalent: "")
+        menu.addItem(hideShowItem)
 
         let launchItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -290,6 +292,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Refresh", action: #selector(refresh), keyEquivalent: "r"))
+        menu.addItem(NSMenuItem(title: "Restart Server", action: #selector(restartServer), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Help", action: #selector(showHelp), keyEquivalent: "?"))
         menu.addItem(NSMenuItem(title: "Copy Debug Info", action: #selector(copyDebugInfo), keyEquivalent: "d"))
         menu.addItem(.separator())
@@ -323,11 +326,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         rebuildMenu()
     }
 
-    @objc private func toggleAutoHide() {
-        autoHideEnabled.toggle()
-        UserDefaults.standard.set(autoHideEnabled, forKey: "autoHidePanel")
-        rebuildMenu()
+    @objc private func togglePillsHidden() {
+        pillsHidden.toggle()
         updatePanelVisibility()
+        updateMenuBarIcon()
+        rebuildMenu()
+    }
+
+    private func updateMenuBarIcon() {
+        guard let button = statusItem?.button else { return }
+        if pillsHidden {
+            let icon = AppIcon.generateGrayed(size: 36)
+            icon.size = NSSize(width: 18, height: 18)
+            button.image = icon
+            button.title = ""
+        } else {
+            let icon = AppIcon.generate(size: 36)
+            icon.size = NSSize(width: 18, height: 18)
+            button.image = icon
+            updateMenuBarBadge()
+        }
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -412,7 +430,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         --- Settings ---
         Terminal: \(terminalMode)
         Dock Side: \(dockSide)
-        Auto-Hide: \(autoHideEnabled ? "ON" : "OFF")
+        Pills Hidden: \(pillsHidden ? "YES" : "NO")
         Launch at Login: \(launchAtLogin)
 
         --- Sessions (\(sessions.count) total, \(visible.count) visible) ---
@@ -438,7 +456,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SessionManager.shared.refresh()
     }
 
+    @objc private func restartServer() {
+        log("Restarting server via launchctl")
+        let plist = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/LaunchAgents/com.claudepills.server.plist"
+        let unload = Process()
+        unload.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        unload.arguments = ["unload", plist]
+        unload.standardError = FileHandle.nullDevice
+        try? unload.run()
+        unload.waitUntilExit()
+
+        let load = Process()
+        load.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        load.arguments = ["load", plist]
+        load.standardError = FileHandle.nullDevice
+        try? load.run()
+        load.waitUntilExit()
+
+        // Reconnect after a short delay to let the server start
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            SessionManager.shared.refresh()
+        }
+        log("Server restarted")
+    }
+
+    private func stopServer() {
+        let plist = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/LaunchAgents/com.claudepills.server.plist"
+        let unload = Process()
+        unload.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        unload.arguments = ["unload", plist]
+        unload.standardError = FileHandle.nullDevice
+        try? unload.run()
+        unload.waitUntilExit()
+    }
+
     @objc private func quit() {
+        stopServer()
         NSApp.terminate(nil)
     }
 }

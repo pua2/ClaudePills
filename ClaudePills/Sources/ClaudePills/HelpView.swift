@@ -42,7 +42,7 @@ struct HelpView: View {
                 helpSection("Interactions") {
                     interactionRow(action: "Click pill", desc: "Focus that session's terminal window")
                     interactionRow(action: "Double-click pill", desc: "Rename the session")
-                    interactionRow(action: "Right-click pill", desc: "Context menu — rename, set color, hide/show, reorder")
+                    interactionRow(action: "Right-click pill", desc: "Context menu — rename, set color, hide/show, reorder, close session")
                     interactionRow(action: "Drag pill vertically", desc: "Reorder pills in the panel")
                     interactionRow(action: "Drag the panel", desc: "Move it up or down along the screen edge")
                     interactionRow(action: "Click +", desc: "Open a new terminal window")
@@ -63,7 +63,9 @@ struct HelpView: View {
                     tipRow("The menu bar icon shows the number of active sessions.")
                     tipRow("Switch between iTerm2 and Terminal.app, or let it auto-detect.")
                     tipRow("Dock the panel on the left or right edge of your screen.")
-                    tipRow("Auto-Hide hides the panel when no sessions are active.")
+                    tipRow("Hide Pills hides the panel and grays out the menu bar icon. Click Show Pills to restore.")
+                    tipRow("Restart Server wipes all stale sessions and reconnects fresh.")
+                    tipRow("Quit also stops the background server.")
                     tipRow("Launch at Login starts ClaudePills when you log in.")
                 }
 
@@ -75,6 +77,7 @@ struct HelpView: View {
                     tipRow("Color-code pills to visually group related sessions.")
                     tipRow("The elapsed timer updates every 30 seconds.")
                     tipRow("Sessions are auto-removed when their Claude process exits.")
+                    tipRow("Close Session (right-click) removes the pill and closes the terminal tab.")
                 }
             }
             .padding(24)
