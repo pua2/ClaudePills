@@ -80,6 +80,8 @@ struct Session: Identifiable, Equatable {
     var startedAt: Date = Date()
     /// Timestamp of the last server update (hook event) for this session.
     var lastServerUpdate: Date = Date()
+    /// The Claude CLI process ID, used to match rescan sessions with hook sessions.
+    var pid: Int?
 
     var displayState: SessionState {
         isHidden ? .hidden : serverState
@@ -101,6 +103,7 @@ struct ServerMessage: Decodable {
     let type: String
     let session: ServerSession?
     let sessions: [ServerSession]?
+    let sessionId: String?
 }
 
 struct ServerSession: Decodable {
@@ -111,9 +114,11 @@ struct ServerSession: Decodable {
     let lastTool: String?
     let terminalSessionId: String?
     let startedAt: Double?
+    let claudePid: Int?
 
     enum CodingKeys: String, CodingKey {
         case id, project, label, state, lastTool, startedAt
         case terminalSessionId = "terminal_session_id"
+        case claudePid = "claude_pid"
     }
 }

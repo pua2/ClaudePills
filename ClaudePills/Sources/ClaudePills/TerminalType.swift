@@ -177,6 +177,39 @@ enum TerminalType: String, CaseIterable {
         }
     }
 
+    func closeScript(sessionId: String) -> String {
+        switch self {
+        case .iterm2:
+            return """
+                tell application "iTerm2"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            repeat with s in sessions of t
+                                if unique id of s is "\(sessionId)" then
+                                    close t
+                                    return
+                                end if
+                            end repeat
+                        end repeat
+                    end repeat
+                end tell
+            """
+        case .terminal:
+            return """
+                tell application "Terminal"
+                    repeat with w in windows
+                        repeat with t in tabs of w
+                            if tty of t is "\(sessionId)" then
+                                close w
+                                return
+                            end if
+                        end repeat
+                    end repeat
+                end tell
+            """
+        }
+    }
+
     func newWindowScript() -> String {
         switch self {
         case .iterm2:

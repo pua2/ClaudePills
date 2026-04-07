@@ -84,7 +84,7 @@ const server = http.createServer((req, res) => {
     req.on('end', () => {
       try {
         const payload = JSON.parse(body);
-        const { session_id, cwd, hook_event_name, tool_name, terminal_session_id } = payload;
+        const { session_id, cwd, hook_event_name, tool_name, terminal_session_id, claude_pid } = payload;
 
         if (!session_id) { res.writeHead(400); res.end('missing session_id'); return; }
 
@@ -92,6 +92,7 @@ const server = http.createServer((req, res) => {
         const session = getOrCreate(session_id, cwd || process.cwd());
         session.lastUpdate = Date.now();
         if (terminal_session_id) session.terminal_session_id = terminal_session_id;
+        if (claude_pid) session.claude_pid = claude_pid;
 
         if (hook_event_name === 'PreToolUse') {
           session.state = 'running';
@@ -99,6 +100,23 @@ const server = http.createServer((req, res) => {
         } else if (hook_event_name === 'Stop' || hook_event_name === 'SubagentStop') {
           session.state = 'waiting';
           session.lastTool = null;
+        }
+
+        // Deduplicate: when a new session appears on a terminal that already
+        // has a different session, mark the older session(s) as complete.
+        // This handles /clear and --continue creating new session_ids in the
+        // same terminal tab.
+        if (terminal_session_id) {
+          for (const [otherId, other] of sessions) {
+            if (otherId !== session_id &&
+                other.terminal_session_id === terminal_session_id &&
+                other.state !== 'complete') {
+              other.state = 'complete';
+              other.lastTool = null;
+              other.lastUpdate = Date.now();
+              broadcast({ type: 'update', session: other });
+            }
+          }
         }
 
         // Handle rename requests from the UI
@@ -113,6 +131,16 @@ const server = http.createServer((req, res) => {
         res.writeHead(400); res.end('invalid JSON');
       }
     });
+    return;
+  }
+
+  // DELETE /session/:id — remove a session
+  if (req.method === 'DELETE' && req.url.startsWith('/session/')) {
+    const id = decodeURIComponent(req.url.slice('/session/'.length));
+    const deleted = sessions.delete(id);
+    if (deleted) broadcast({ type: 'remove', sessionId: id });
+    res.writeHead(deleted ? 200 : 404, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: deleted }));
     return;
   }
 
