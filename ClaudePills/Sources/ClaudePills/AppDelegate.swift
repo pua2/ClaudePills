@@ -293,6 +293,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Refresh", action: #selector(refresh), keyEquivalent: "r"))
         menu.addItem(NSMenuItem(title: "Restart Server", action: #selector(restartServer), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Check for Updates", action: #selector(checkForUpdates), keyEquivalent: "u"))
         menu.addItem(NSMenuItem(title: "Help", action: #selector(showHelp), keyEquivalent: "?"))
         menu.addItem(NSMenuItem(title: "Copy Debug Info", action: #selector(copyDebugInfo), keyEquivalent: "d"))
         menu.addItem(.separator())
@@ -490,6 +491,173 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         unload.waitUntilExit()
     }
 
+    // MARK: - Check for updates
+
+    /// Derives the repo directory from the server LaunchAgent plist.
+    private func repoDirectory() -> String? {
+        let plistPath = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/LaunchAgents/com.claudepills.server.plist"
+        guard let data = FileManager.default.contents(atPath: plistPath),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let args = plist["ProgramArguments"] as? [String],
+              args.count >= 2 else { return nil }
+        // args[1] is like /.../ClaudePills/server/server.js → go up 2 levels
+        return (args[1] as NSString).deletingLastPathComponent.deletingLastPathComponent
+    }
+
+    private func runGit(_ arguments: [String], in directory: String) -> String? {
+        let proc = Process()
+        proc.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        proc.arguments = arguments
+        proc.currentDirectoryURL = URL(fileURLWithPath: directory)
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = FileHandle.nullDevice
+        do { try proc.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        proc.waitUntilExit()
+        guard proc.terminationStatus == 0 else { return nil }
+        return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    @objc private func checkForUpdates() {
+        guard let repo = repoDirectory() else {
+            showAlert(title: "Update Error", message: "Could not find ClaudePills repo. Is the server LaunchAgent installed?")
+            return
+        }
+
+        log("Checking for updates in \(repo)")
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+
+            // Fetch latest from remote
+            guard self.runGit(["fetch", "origin"], in: repo) != nil else {
+                DispatchQueue.main.async {
+                    self.showAlert(title: "Update Error", message: "Could not reach GitHub. Check your internet connection.")
+                }
+                return
+            }
+
+            // Compare local HEAD vs remote main
+            let localHead = self.runGit(["rev-parse", "HEAD"], in: repo) ?? ""
+            let remoteHead = self.runGit(["rev-parse", "origin/main"], in: repo) ?? ""
+
+            if localHead == remoteHead {
+                DispatchQueue.main.async {
+                    self.showAlert(title: "Up to Date", message: "You're running the latest version of ClaudePills.")
+                }
+                return
+            }
+
+            // Get list of new commits
+            let logOutput = self.runGit(["log", "--oneline", "HEAD..origin/main"], in: repo) ?? "(unknown changes)"
+
+            DispatchQueue.main.async {
+                self.showUpdateAlert(repo: repo, commits: logOutput)
+            }
+        }
+    }
+
+    private func showUpdateAlert(repo: String, commits: String) {
+        let alert = NSAlert()
+        alert.messageText = "Update Available"
+        alert.informativeText = "New changes:\n\n\(commits)\n\nInstall update? This will rebuild and restart ClaudePills."
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "Install Update")
+        alert.addButton(withTitle: "Later")
+
+        NSApp.activate(ignoringOtherApps: true)
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            installUpdate(repo: repo)
+        }
+    }
+
+    private func installUpdate(repo: String) {
+        log("Installing update from \(repo)")
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+
+            // Pull latest
+            guard self.runGit(["pull", "origin", "main"], in: repo) != nil else {
+                DispatchQueue.main.async {
+                    self.showAlert(title: "Update Failed", message: "git pull failed.")
+                }
+                return
+            }
+
+            // Rebuild
+            let build = Process()
+            build.executableURL = URL(fileURLWithPath: "/usr/bin/swift")
+            build.arguments = ["build", "--package-path", "\(repo)/ClaudePills"]
+            build.currentDirectoryURL = URL(fileURLWithPath: repo)
+            build.standardError = FileHandle.nullDevice
+            do { try build.run() } catch {
+                DispatchQueue.main.async {
+                    self.showAlert(title: "Update Failed", message: "Swift build failed: \(error.localizedDescription)")
+                }
+                return
+            }
+            build.waitUntilExit()
+            guard build.terminationStatus == 0 else {
+                DispatchQueue.main.async {
+                    self.showAlert(title: "Update Failed", message: "Swift build exited with code \(build.terminationStatus).")
+                }
+                return
+            }
+
+            // Run install script to create new .app bundle
+            let install = Process()
+            install.executableURL = URL(fileURLWithPath: "/bin/bash")
+            install.arguments = ["\(repo)/scripts/install-launchagent.sh"]
+            install.currentDirectoryURL = URL(fileURLWithPath: repo)
+            install.standardError = FileHandle.nullDevice
+            do { try install.run() } catch {
+                DispatchQueue.main.async {
+                    self.showAlert(title: "Update Failed", message: "Install script failed: \(error.localizedDescription)")
+                }
+                return
+            }
+            install.waitUntilExit()
+
+            DispatchQueue.main.async {
+                log("Update installed, restarting")
+
+                // Restart server
+                self.restartServer()
+
+                // Relaunch app via LaunchAgent
+                let plist = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/LaunchAgents/com.claudepills.app.plist"
+                let unload = Process()
+                unload.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+                unload.arguments = ["unload", plist]
+                unload.standardError = FileHandle.nullDevice
+                try? unload.run()
+                unload.waitUntilExit()
+
+                let load = Process()
+                load.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+                load.arguments = ["load", plist]
+                load.standardError = FileHandle.nullDevice
+                try? load.run()
+
+                // Quit current instance — LaunchAgent will start the new one
+                NSApp.terminate(nil)
+            }
+        }
+    }
+
+    private func showAlert(title: String, message: String) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "OK")
+        NSApp.activate(ignoringOtherApps: true)
+        alert.runModal()
+    }
+
     @objc private func quit() {
         stopServer()
         NSApp.terminate(nil)
@@ -498,4 +666,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension Notification.Name {
     static let terminalDidChange = Notification.Name("terminalDidChange")
+}
+
+private extension String {
+    var deletingLastPathComponent: String {
+        (self as NSString).deletingLastPathComponent
+    }
 }
