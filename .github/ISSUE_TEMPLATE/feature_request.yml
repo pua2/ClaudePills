@@ -1,0 +1,34 @@
+name: Feature Request
+description: Suggest a new feature or improvement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Have an idea for ClaudePills? We'd love to hear it.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What would you like?
+      description: Describe the feature or improvement.
+      placeholder: "e.g. Add a keyboard shortcut to toggle pill visibility."
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Why?
+      description: What problem does this solve or what workflow does it improve?
+      placeholder: "e.g. I frequently need to hide pills during screen shares."
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Mockups, screenshots, or references to similar features in other tools.
+    validations:
+      required: false
