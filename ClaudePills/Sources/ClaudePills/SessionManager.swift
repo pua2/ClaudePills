@@ -33,6 +33,11 @@ final class SessionManager: ObservableObject {
 
     func connect() {
         disconnect()
+        // Clear local sessions on reconnect so we don't accumulate stale pills
+        // across server restarts. The snapshot from the server is the source of truth.
+        sessions.removeAll()
+        projectCounts.removeAll()
+        hasReceivedSnapshot = false
         urlSession = URLSession(configuration: .default)
         wsTask = urlSession?.webSocketTask(with: serverURL)
         wsTask?.resume()
@@ -236,18 +241,30 @@ final class SessionManager: ObservableObject {
         return kill(Int32(pid), 0) == 0
     }
 
-    /// Returns true if the given PID has child processes (tool is actively executing).
+    /// Background processes Claude keeps alive that don't indicate an active tool.
+    private static let ignoredChildProcesses: Set<String> = [
+        "sourcekit-lsp", "caffeinate", "gh"
+    ]
+
+    /// Returns true if the given PID has child processes that indicate a tool is actively executing.
+    /// Filters out known long-running background processes (LSP, caffeinate, etc.).
     private static func hasChildProcesses(pid: Int) -> Bool {
         let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
-        proc.arguments = ["-P", "\(pid)"]
+        proc.executableURL = URL(fileURLWithPath: "/bin/ps")
+        proc.arguments = ["-o", "comm=", "--ppid", "\(pid)"]
         let pipe = Pipe()
         proc.standardOutput = pipe
         proc.standardError = FileHandle.nullDevice
         do { try proc.run() } catch { return false }
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
         proc.waitUntilExit()
-        return !data.isEmpty
+        guard let output = String(data: data, encoding: .utf8) else { return false }
+        let children = output.split(separator: "\n").map { line in
+            // comm may be a full path — take just the last component
+            let name = line.trimmingCharacters(in: .whitespaces)
+            return (name as NSString).lastPathComponent
+        }
+        return children.contains { !ignoredChildProcesses.contains($0) }
     }
 
     // MARK: - Notifications
@@ -521,7 +538,7 @@ final class SessionManager: ObservableObject {
 
     /// Polling interval for window state checks.
     /// 5s is responsive enough for hide/show detection while keeping CPU usage low.
-    private let windowPollInterval: TimeInterval = 5
+    private let windowPollInterval: TimeInterval = 3
 
     private func terminalIdMatchesType(_ rawId: String, terminal: TerminalType) -> Bool {
         switch terminal {
@@ -694,7 +711,7 @@ final class SessionManager: ObservableObject {
 
     // MARK: - Question state detection
 
-    private let questionThreshold: TimeInterval = 4
+    private let questionThreshold: TimeInterval = 2
 
     /// Checks ~/.claudepills/waiting/ for marker files written by the PreToolUse hook.
     private func checkQuestionMarkers() {
@@ -751,15 +768,24 @@ final class SessionManager: ObservableObject {
             let elapsed = now.timeIntervalSince(sessions[idx].lastServerUpdate)
             guard elapsed >= staleRunningThreshold else { continue }
 
-            // Verify the process isn't actually doing work
             let pid = sessions[idx].pid ?? pidForSession(sessions[idx].id)
+
+            // If the process is alive and has active child processes, it's working
             if let pid, Self.hasChildProcesses(pid: pid) {
                 continue
             }
 
-            sessions[idx].serverState = .waiting
-            sessions[idx].lastTool = nil
-            log("Session \(sessions[idx].label) marked stale after \(Int(elapsed))s without update")
+            // If the process is alive but idle (no children), it's waiting for input
+            // If the process is dead, it's complete
+            if let pid, kill(Int32(pid), 0) == 0 {
+                sessions[idx].serverState = .waiting
+                sessions[idx].lastTool = nil
+                log("Session \(sessions[idx].label) marked waiting after \(Int(elapsed))s idle")
+            } else {
+                sessions[idx].serverState = .complete
+                sessions[idx].lastTool = nil
+                log("Session \(sessions[idx].label) marked complete — process dead after \(Int(elapsed))s")
+            }
         }
     }
 
