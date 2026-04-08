@@ -36,6 +36,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pillsHidden = false
     private var helpWindow: NSWindow?
     private var debugWindow: NSWindow?
+    private var autoUpdateTimer: Timer?
+
+    private let autoUpdateCheckKey = "autoUpdateCheckEnabled"
+    private let lastUpdateCheckKey = "lastAutoUpdateCheck"
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -81,6 +85,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.updateMenuBarBadge()
             }
             .store(in: &cancellables)
+
+        scheduleAutoUpdateCheck()
     }
 
     // MARK: - Stale marker cleanup
@@ -238,66 +244,70 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func rebuildMenu() {
         let menu = NSMenu()
 
-        // Terminal picker
-        let terminalHeader = NSMenuItem(title: "Terminal", action: nil, keyEquivalent: "")
-        terminalHeader.isEnabled = false
-        menu.addItem(terminalHeader)
+        // --- Sessions ---
+        let hideShowTitle = pillsHidden ? "Show Pills" : "Hide Pills"
+        menu.addItem(NSMenuItem(title: hideShowTitle, action: #selector(togglePillsHidden), keyEquivalent: "h"))
+        menu.addItem(NSMenuItem(title: "Refresh Sessions", action: #selector(refresh), keyEquivalent: "r"))
 
-        // Automatic option
+        // --- Terminal ---
+        menu.addItem(.separator())
+
+        let terminalMenu = NSMenu()
         let autoTitle = TerminalBridge.isAutomatic
             ? "Automatic (\(TerminalBridge.selected.displayName))"
             : "Automatic"
         let autoItem = NSMenuItem(title: autoTitle, action: #selector(selectAutomatic), keyEquivalent: "")
         autoItem.state = TerminalBridge.isAutomatic ? .on : .off
-        menu.addItem(autoItem)
-
-        menu.addItem(.separator())
-
-        // Manual terminal options
+        terminalMenu.addItem(autoItem)
+        terminalMenu.addItem(.separator())
         for terminal in TerminalType.allCases {
             let item = NSMenuItem(title: terminal.displayName, action: #selector(selectTerminal(_:)), keyEquivalent: "")
             item.representedObject = terminal.rawValue
             if !TerminalBridge.isAutomatic && terminal == TerminalBridge.selected {
                 item.state = .on
             }
-            menu.addItem(item)
+            terminalMenu.addItem(item)
         }
+        let terminalItem = NSMenuItem(title: "Terminal", action: nil, keyEquivalent: "")
+        terminalItem.submenu = terminalMenu
+        menu.addItem(terminalItem)
 
-        // Dock side
-        menu.addItem(.separator())
-
-        let sideHeader = NSMenuItem(title: "Position", action: nil, keyEquivalent: "")
-        sideHeader.isEnabled = false
-        menu.addItem(sideHeader)
-
+        // --- Position ---
+        let positionMenu = NSMenu()
         let currentSide = panel?.dockSide ?? .right
         let leftItem = NSMenuItem(title: "Left Side", action: #selector(selectLeftSide), keyEquivalent: "")
         leftItem.state = currentSide == .left ? .on : .off
-        menu.addItem(leftItem)
-
+        positionMenu.addItem(leftItem)
         let rightItem = NSMenuItem(title: "Right Side", action: #selector(selectRightSide), keyEquivalent: "")
         rightItem.state = currentSide == .right ? .on : .off
-        menu.addItem(rightItem)
+        positionMenu.addItem(rightItem)
+        let positionItem = NSMenuItem(title: "Position", action: nil, keyEquivalent: "")
+        positionItem.submenu = positionMenu
+        menu.addItem(positionItem)
 
-        // Toggles
+        // --- Settings ---
         menu.addItem(.separator())
-
-        let hideShowTitle = pillsHidden ? "Show Pills" : "Hide Pills"
-        let hideShowItem = NSMenuItem(title: hideShowTitle, action: #selector(togglePillsHidden), keyEquivalent: "")
-        menu.addItem(hideShowItem)
 
         let launchItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(launchItem)
 
+        let autoUpdateItem = NSMenuItem(title: "Auto Check for Updates", action: #selector(toggleAutoUpdateCheck), keyEquivalent: "")
+        autoUpdateItem.state = isAutoUpdateEnabled ? .on : .off
+        menu.addItem(autoUpdateItem)
+
+        // --- Updates & Help ---
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Refresh", action: #selector(refresh), keyEquivalent: "r"))
-        menu.addItem(NSMenuItem(title: "Restart Server", action: #selector(restartServer), keyEquivalent: ""))
+
         menu.addItem(NSMenuItem(title: "Check for Updates", action: #selector(checkForUpdates), keyEquivalent: "u"))
+        menu.addItem(NSMenuItem(title: "Restart Server", action: #selector(restartServer), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Help", action: #selector(showHelp), keyEquivalent: "?"))
         menu.addItem(NSMenuItem(title: "Copy Debug Info", action: #selector(copyDebugInfo), keyEquivalent: "d"))
+
+        // --- Quit ---
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit ClaudePills", action: #selector(quit), keyEquivalent: "q"))
+
         statusItem.menu = menu
     }
 
@@ -489,6 +499,83 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         unload.standardError = FileHandle.nullDevice
         try? unload.run()
         unload.waitUntilExit()
+    }
+
+    // MARK: - Auto update check
+
+    private var isAutoUpdateEnabled: Bool {
+        // Default to ON if never set
+        if UserDefaults.standard.object(forKey: autoUpdateCheckKey) == nil { return true }
+        return UserDefaults.standard.bool(forKey: autoUpdateCheckKey)
+    }
+
+    @objc private func toggleAutoUpdateCheck() {
+        let newValue = !isAutoUpdateEnabled
+        UserDefaults.standard.set(newValue, forKey: autoUpdateCheckKey)
+        log("Auto update check \(newValue ? "enabled" : "disabled")")
+        if newValue {
+            scheduleAutoUpdateCheck()
+        } else {
+            autoUpdateTimer?.invalidate()
+            autoUpdateTimer = nil
+        }
+        rebuildMenu()
+    }
+
+    private func scheduleAutoUpdateCheck() {
+        guard isAutoUpdateEnabled else { return }
+
+        // Check on launch if at least 24 hours since last check
+        let lastCheck = UserDefaults.standard.double(forKey: lastUpdateCheckKey)
+        let now = Date().timeIntervalSince1970
+        let dayInterval: TimeInterval = 24 * 60 * 60
+
+        if now - lastCheck >= dayInterval {
+            // Delay a few seconds so the app finishes launching
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                self?.silentCheckForUpdates()
+            }
+        }
+
+        // Schedule a repeating timer for every 24 hours
+        autoUpdateTimer?.invalidate()
+        autoUpdateTimer = Timer.scheduledTimer(withTimeInterval: dayInterval, repeats: true) { [weak self] _ in
+            self?.silentCheckForUpdates()
+        }
+    }
+
+    /// Checks for updates silently — only shows UI if an update is available.
+    private func silentCheckForUpdates() {
+        guard let repo = repoDirectory() else {
+            log("Auto update: could not find repo directory")
+            return
+        }
+
+        log("Auto-checking for updates in \(repo)")
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: lastUpdateCheckKey)
+
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            guard let self else { return }
+
+            guard self.runGit(["fetch", "origin"], in: repo) != nil else {
+                log("Auto update: fetch failed, skipping")
+                return
+            }
+
+            let localHead = self.runGit(["rev-parse", "HEAD"], in: repo) ?? ""
+            let remoteHead = self.runGit(["rev-parse", "origin/main"], in: repo) ?? ""
+
+            guard localHead != remoteHead else {
+                log("Auto update: already up to date")
+                return
+            }
+
+            let logOutput = self.runGit(["log", "--oneline", "HEAD..origin/main"], in: repo) ?? "(unknown changes)"
+
+            DispatchQueue.main.async {
+                self.showUpdateAlert(repo: repo, commits: logOutput)
+            }
+        }
     }
 
     // MARK: - Check for updates
