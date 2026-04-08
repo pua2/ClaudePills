@@ -1,0 +1,57 @@
+name: Bug Report
+description: Report a bug or unexpected behavior in ClaudePills
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please fill out the sections below to help us investigate.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: "e.g. Pills stay on 'Running' even after Claude finishes responding."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+      description: What should have happened instead?
+      placeholder: "e.g. The pill should change to the pulsing dot (Waiting) state."
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: How can we reproduce the issue?
+      placeholder: |
+        1. Open a Claude Code session
+        2. Wait for response to finish
+        3. Observe the pill state
+    validations:
+      required: true
+
+  - type: textarea
+    id: debug
+    attributes:
+      label: Debug info
+      description: |
+        Paste the output from **Copy Debug Info** (click the ClaudePills menu bar icon > Copy Debug Info, or press Cmd+D). This includes your macOS version, app version, session states, terminal type, and recent logs.
+      placeholder: "Paste debug info here..."
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Screenshots, screen recordings, or anything else that might help.
+    validations:
+      required: false

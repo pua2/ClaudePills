@@ -249,18 +249,38 @@ final class SessionManager: ObservableObject {
     /// Returns true if the given PID has child processes that indicate a tool is actively executing.
     /// Filters out known long-running background processes (LSP, caffeinate, etc.).
     private static func hasChildProcesses(pid: Int) -> Bool {
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/bin/ps")
-        proc.arguments = ["-o", "comm=", "--ppid", "\(pid)"]
-        let pipe = Pipe()
-        proc.standardOutput = pipe
-        proc.standardError = FileHandle.nullDevice
-        do { try proc.run() } catch { return false }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        proc.waitUntilExit()
-        guard let output = String(data: data, encoding: .utf8) else { return false }
-        let children = output.split(separator: "\n").map { line in
-            // comm may be a full path — take just the last component
+        // Get child PIDs via pgrep (macOS doesn't support ps --ppid)
+        let pgrep = Process()
+        pgrep.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        pgrep.arguments = ["-P", "\(pid)"]
+        let pgrepPipe = Pipe()
+        pgrep.standardOutput = pgrepPipe
+        pgrep.standardError = FileHandle.nullDevice
+        do { try pgrep.run() } catch { return false }
+        let pgrepData = pgrepPipe.fileHandleForReading.readDataToEndOfFile()
+        pgrep.waitUntilExit()
+        guard let pgrepOutput = String(data: pgrepData, encoding: .utf8),
+              !pgrepOutput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return false
+        }
+
+        let childPids = pgrepOutput.split(separator: "\n")
+            .compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+        guard !childPids.isEmpty else { return false }
+
+        // Get process names for the child PIDs
+        let ps = Process()
+        ps.executableURL = URL(fileURLWithPath: "/bin/ps")
+        ps.arguments = ["-o", "comm=", "-p"] + childPids.map(String.init)
+        let psPipe = Pipe()
+        ps.standardOutput = psPipe
+        ps.standardError = FileHandle.nullDevice
+        do { try ps.run() } catch { return false }
+        let psData = psPipe.fileHandleForReading.readDataToEndOfFile()
+        ps.waitUntilExit()
+        guard let psOutput = String(data: psData, encoding: .utf8) else { return false }
+
+        let children = psOutput.split(separator: "\n").map { line in
             let name = line.trimmingCharacters(in: .whitespaces)
             return (name as NSString).lastPathComponent
         }
