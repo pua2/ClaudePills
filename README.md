@@ -40,6 +40,8 @@ Each active Claude Code session gets a floating pill pinned to the edge of your 
 - Dock the panel on the **left or right** edge
 - **Auto-Hide** the panel when no sessions are active
 - **Launch at Login** to start automatically
+- **Auto Check for Updates** — silently checks GitHub once a day and on launch; prompts only when an update is available
+- **Check for Updates** — manually pull, rebuild, and restart in one click
 - **Copy Debug Info** (Cmd+D) for bug reports
 
 ### Notifications
@@ -52,7 +54,17 @@ Desktop notifications when a session completes or errors — so you can work in 
 - Node.js 18+ (`brew install node` if you don't have it)
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) CLI
 
-## Quick Start
+## Install
+
+**One command:**
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pua2/ClaudePills/main/scripts/install.sh | bash
+```
+
+This clones the repo, builds the app, installs it to `/Applications`, and starts everything.
+
+**Or clone and set up manually:**
 
 ```bash
 git clone https://github.com/pua2/ClaudePills.git
@@ -60,15 +72,9 @@ cd ClaudePills
 ./setup.sh
 ```
 
-The setup script does everything:
-1. Checks prerequisites (Swift, Node.js)
-2. Builds the native macOS app
-3. Installs server dependencies
-4. Installs Claude Code hooks in `~/.claude/settings.json`
-5. Creates `ClaudePills.app` in `~/Applications` with a proper app icon
-6. Starts the server and app via LaunchAgents
+The setup script checks prerequisites, builds the app, installs server dependencies, installs Claude Code hooks, creates `ClaudePills.app` in `/Applications`, and starts the server and app via LaunchAgents.
 
-**After setup, grant Accessibility permission:**
+**After install, grant Accessibility permission:**
 System Settings > Privacy & Security > Accessibility > toggle ON **ClaudePills**
 
 Then start a Claude Code session in your terminal — a pill will appear on the right edge of your screen.
@@ -115,11 +121,26 @@ All communication stays on `127.0.0.1:3737`. Nothing leaves your machine.
 
 **App doesn't appear in menu bar**
 - Grant Accessibility: System Settings > Privacy & Security > Accessibility > ClaudePills ON
-- Restart the app: `open ~/Applications/ClaudePills.app`
+- Restart the app: `open /Applications/ClaudePills.app`
 
 **Pills show wrong state**
 - Click the menu bar icon > Refresh (Cmd+R)
 - Use Copy Debug Info (Cmd+D) and share the output for help
+
+## Update
+
+ClaudePills checks for updates automatically once a day (toggle in menu bar). You can also update manually:
+
+- **From the menu bar:** Click the pill icon > Check for Updates
+- **From the terminal:**
+```bash
+cd ~/.claudepills/repo  # or wherever you cloned it
+git pull origin main
+swift build --package-path ClaudePills
+bash scripts/install-launchagent.sh
+launchctl unload ~/Library/LaunchAgents/com.claudepills.app.plist
+launchctl load ~/Library/LaunchAgents/com.claudepills.app.plist
+```
 
 ## Uninstall
 
@@ -132,12 +153,12 @@ launchctl unload ~/Library/LaunchAgents/com.claudepills.app.plist
 rm ~/Library/LaunchAgents/com.claudepills.*.plist
 
 # Remove app
-rm -rf ~/Applications/ClaudePills.app
+rm -rf /Applications/ClaudePills.app
 
 # Remove hooks from Claude Code settings (edit manually)
 # Open ~/.claude/settings.json and remove the notify.sh hook entries
 
-# Remove logs
+# Remove logs and repo
 rm -rf ~/.claudepills
 ```
 
@@ -167,7 +188,8 @@ ClaudePills/
 │   ├── notify.sh         # Sends events to server
 │   └── install.sh        # Installs hooks into Claude settings
 ├── scripts/
-│   └── install-launchagent.sh  # Creates .app bundle + LaunchAgents
+│   ├── install.sh             # One-command installer (curl | bash)
+│   └── install-launchagent.sh # Creates .app bundle + LaunchAgents
 ├── demo/                 # Web-based interactive mockup (dev only)
 ├── setup.sh              # One-command setup
 └── .github/workflows/ci.yml
