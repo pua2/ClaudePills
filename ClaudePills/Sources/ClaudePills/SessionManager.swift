@@ -21,6 +21,7 @@ final class SessionManager: ObservableObject {
     private let serverURL = URL(string: "ws://127.0.0.1:3737")!
     private var projectCounts: [String: Int] = [:]
     private var hasReceivedSnapshot = false
+    private var consecutiveFailures = 0
 
     deinit {
         pollTimer?.invalidate()
@@ -71,6 +72,7 @@ final class SessionManager: ObservableObject {
             guard let self else { return }
             switch result {
             case .success(.string(let text)):
+                self.consecutiveFailures = 0
                 if let data = text.data(using: .utf8) {
                     DispatchQueue.main.async {
                         self.handleMessage(data)
@@ -78,6 +80,12 @@ final class SessionManager: ObservableObject {
                 }
                 self.listen()
             case .failure:
+                self.consecutiveFailures += 1
+                if self.consecutiveFailures >= 3 {
+                    log("WebSocket failed \(self.consecutiveFailures) times, restarting server")
+                    self.restartServerProcess()
+                    self.consecutiveFailures = 0
+                }
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) {
                     self.connect()
                 }
@@ -85,6 +93,29 @@ final class SessionManager: ObservableObject {
                 self.listen()
             }
         }
+    }
+
+    /// Restarts the server LaunchAgent if the WebSocket connection keeps failing.
+    private func restartServerProcess() {
+        let plist = "\(FileManager.default.homeDirectoryForCurrentUser.path)/Library/LaunchAgents/com.claudepills.server.plist"
+
+        let unload = Process()
+        unload.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        unload.arguments = ["unload", plist]
+        unload.standardError = FileHandle.nullDevice
+        unload.standardOutput = FileHandle.nullDevice
+        try? unload.run()
+        unload.waitUntilExit()
+
+        let load = Process()
+        load.executableURL = URL(fileURLWithPath: "/bin/launchctl")
+        load.arguments = ["load", plist]
+        load.standardError = FileHandle.nullDevice
+        load.standardOutput = FileHandle.nullDevice
+        try? load.run()
+        load.waitUntilExit()
+
+        log("Server LaunchAgent restarted")
     }
 
     // MARK: - Message handling
