@@ -40,6 +40,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private let autoUpdateCheckKey = "autoUpdateCheckEnabled"
     private let lastUpdateCheckKey = "lastAutoUpdateCheck"
+    private let skippedUpdateSHAKey = "skippedUpdateSHA"
+
+    /// Tracks a pending update the user hasn't installed yet.
+    private var pendingUpdate: (repo: String, remoteSHA: String, commits: String)?
 
     deinit {
         NotificationCenter.default.removeObserver(self)
@@ -299,7 +303,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // --- Updates & Help ---
         menu.addItem(.separator())
 
-        menu.addItem(NSMenuItem(title: "Check for Updates", action: #selector(checkForUpdates), keyEquivalent: "u"))
+        if pendingUpdate != nil {
+            menu.addItem(NSMenuItem(title: "Update Available — Install Now", action: #selector(installPendingUpdate), keyEquivalent: "u"))
+        } else {
+            menu.addItem(NSMenuItem(title: "Check for Updates", action: #selector(checkForUpdates), keyEquivalent: "u"))
+        }
         menu.addItem(NSMenuItem(title: "Restart Server", action: #selector(restartServer), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: "Help", action: #selector(showHelp), keyEquivalent: "?"))
         menu.addItem(NSMenuItem(title: "Copy Debug Info", action: #selector(copyDebugInfo), keyEquivalent: "d"))
@@ -544,7 +552,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Checks for updates silently — only shows UI if an update is available.
+    /// Checks for updates silently — only shows UI if an update is available and not skipped.
     private func silentCheckForUpdates() {
         guard let repo = repoDirectory() else {
             log("Auto update: could not find repo directory")
@@ -570,10 +578,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
 
+            let skippedSHA = UserDefaults.standard.string(forKey: self.skippedUpdateSHAKey)
             let logOutput = self.runGit(["log", "--oneline", "HEAD..origin/main"], in: repo) ?? "(unknown changes)"
 
             DispatchQueue.main.async {
-                self.showUpdateAlert(repo: repo, commits: logOutput)
+                // Always track the pending update so the menu item updates
+                self.pendingUpdate = (repo: repo, remoteSHA: remoteHead, commits: logOutput)
+                self.rebuildMenu()
+
+                // Only show the alert if this version wasn't skipped
+                if remoteHead != skippedSHA {
+                    self.showUpdateAlert(repo: repo, remoteSHA: remoteHead, commits: logOutput)
+                } else {
+                    log("Auto update: version \(remoteHead.prefix(7)) was skipped by user")
+                }
             }
         }
     }
@@ -631,6 +649,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
             if localHead == remoteHead {
                 DispatchQueue.main.async {
+                    self.pendingUpdate = nil
+                    self.rebuildMenu()
                     self.showAlert(title: "Up to Date", message: "You're running the latest version of ClaudePills.")
                 }
                 return
@@ -640,28 +660,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let logOutput = self.runGit(["log", "--oneline", "HEAD..origin/main"], in: repo) ?? "(unknown changes)"
 
             DispatchQueue.main.async {
-                self.showUpdateAlert(repo: repo, commits: logOutput)
+                self.pendingUpdate = (repo: repo, remoteSHA: remoteHead, commits: logOutput)
+                self.rebuildMenu()
+                // Manual check always shows the alert (clears any skip for this SHA)
+                self.showUpdateAlert(repo: repo, remoteSHA: remoteHead, commits: logOutput)
             }
         }
     }
 
-    private func showUpdateAlert(repo: String, commits: String) {
+    private func showUpdateAlert(repo: String, remoteSHA: String, commits: String) {
         let alert = NSAlert()
         alert.messageText = "Update Available"
         alert.informativeText = "New changes:\n\n\(commits)\n\nInstall update? This will rebuild and restart ClaudePills."
         alert.alertStyle = .informational
         alert.addButton(withTitle: "Install Update")
-        alert.addButton(withTitle: "Later")
+        alert.addButton(withTitle: "Skip This Version")
 
         NSApp.activate(ignoringOtherApps: true)
         let response = alert.runModal()
         if response == .alertFirstButtonReturn {
             installUpdate(repo: repo)
+        } else {
+            UserDefaults.standard.set(remoteSHA, forKey: skippedUpdateSHAKey)
+            log("User skipped version \(remoteSHA.prefix(7))")
         }
+    }
+
+    /// Installs a previously discovered pending update directly (no second alert).
+    @objc private func installPendingUpdate() {
+        guard let pending = pendingUpdate else { return }
+        installUpdate(repo: pending.repo)
     }
 
     private func installUpdate(repo: String) {
         log("Installing update from \(repo)")
+        pendingUpdate = nil
+        UserDefaults.standard.removeObject(forKey: skippedUpdateSHAKey)
+        rebuildMenu()
 
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }

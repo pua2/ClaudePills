@@ -27,21 +27,26 @@ if [[ ! -f "$APP_BIN" ]]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Assemble ClaudePills.app in ~/Applications
+# 2. Assemble ClaudePills.app in /Applications
 # ---------------------------------------------------------------------------
-APP_DIR="$HOME/Applications/ClaudePills.app"
+APP_DIR="/Applications/ClaudePills.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
 
-echo "Creating app bundle at $APP_DIR..."
-rm -rf "$APP_DIR"
-mkdir -p "$MACOS"
+FRESH_INSTALL=false
+if [[ ! -d "$APP_DIR" ]]; then
+    FRESH_INSTALL=true
+    echo "Installing ClaudePills to $APP_DIR..."
+    mkdir -p "$MACOS" "$CONTENTS/Resources"
+else
+    echo "Updating ClaudePills at $APP_DIR..."
+fi
 
-# Copy binary into bundle
+# Update binary
 cp "$APP_BIN" "$MACOS/ClaudePills"
 chmod +x "$MACOS/ClaudePills"
 
-# Write Info.plist — required for macOS to track the app in Accessibility prefs
+# Write/update Info.plist
 cat > "$CONTENTS/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -75,15 +80,14 @@ cat > "$CONTENTS/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-# Generate .icns from the programmatic icon
-echo "Generating app icon..."
-ICONSET_DIR=$(mktemp -d)/ClaudePills.iconset
-mkdir -p "$ICONSET_DIR"
+# Only generate icon on fresh install (it never changes)
+if [[ "$FRESH_INSTALL" == "true" ]] || [[ ! -f "$CONTENTS/Resources/AppIcon.icns" ]]; then
+    echo "Generating app icon..."
+    ICONSET_DIR=$(mktemp -d)/ClaudePills.iconset
+    mkdir -p "$ICONSET_DIR"
 
-# Build a tiny Swift script to export the icon at required sizes
-swift - "$ICONSET_DIR" <<'SWIFT'
+    swift - "$ICONSET_DIR" <<'SWIFT'
 import AppKit
-// Reuse the same icon generation logic
 func generateIcon(size: CGFloat) -> NSImage {
     let image = NSImage(size: NSSize(width: size, height: size))
     image.lockFocus()
@@ -155,16 +159,16 @@ for (sz, name) in sizes {
 }
 SWIFT
 
-# Convert iconset to icns
-iconutil -c icns "$ICONSET_DIR" -o "$CONTENTS/Resources/AppIcon.icns" 2>/dev/null || {
     mkdir -p "$CONTENTS/Resources"
     iconutil -c icns "$ICONSET_DIR" -o "$CONTENTS/Resources/AppIcon.icns"
-}
+fi
 
-# Ad-hoc code sign so macOS TCC shows Automation/Accessibility permission prompts
-codesign --force --deep --sign - "$APP_DIR"
+# Ad-hoc code sign — only on fresh install to preserve TCC (Accessibility) permissions
+if [[ "$FRESH_INSTALL" == "true" ]]; then
+    codesign --force --deep --sign - "$APP_DIR"
+fi
 
-echo "App bundle created at $APP_DIR"
+echo "App bundle ready at $APP_DIR"
 
 # ---------------------------------------------------------------------------
 # 3. Install LaunchAgents
@@ -223,9 +227,20 @@ echo "Installed LaunchAgents."
 echo "  Server: $PLIST_DIR/com.claudepills.server.plist"
 echo "  App:    $PLIST_DIR/com.claudepills.app.plist"
 echo ""
-echo "To apply now:"
-echo "  launchctl load $PLIST_DIR/com.claudepills.server.plist"
-echo "  launchctl load $PLIST_DIR/com.claudepills.app.plist"
-echo ""
-echo "Then open System Settings > Privacy & Security > Accessibility"
-echo "and toggle on 'ClaudePills'."
+
+if [[ "$FRESH_INSTALL" == "true" ]]; then
+    echo "ClaudePills has been added to /Applications."
+    echo ""
+    echo "To start now:"
+    echo "  launchctl load $PLIST_DIR/com.claudepills.server.plist"
+    echo "  launchctl load $PLIST_DIR/com.claudepills.app.plist"
+    echo ""
+    echo "Then open System Settings > Privacy & Security > Accessibility"
+    echo "and toggle on 'ClaudePills'."
+else
+    echo "ClaudePills has been updated in /Applications."
+    echo ""
+    echo "To restart:"
+    echo "  launchctl unload $PLIST_DIR/com.claudepills.app.plist"
+    echo "  launchctl load $PLIST_DIR/com.claudepills.app.plist"
+fi
