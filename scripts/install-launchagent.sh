@@ -163,10 +163,11 @@ SWIFT
     iconutil -c icns "$ICONSET_DIR" -o "$CONTENTS/Resources/AppIcon.icns"
 fi
 
-# Ad-hoc code sign — only on fresh install to preserve TCC (Accessibility) permissions
-if [[ "$FRESH_INSTALL" == "true" ]]; then
-    codesign --force --deep --sign - "$APP_DIR"
-fi
+# Ad-hoc code sign — required after every binary update so the signature is valid.
+# Without this, macOS sees an invalid signature and prompts for permissions on every launch.
+# After an update, macOS may ask for Accessibility permission once (new CDHash), but
+# between updates quit/reopen will work without prompting.
+codesign --force --deep --sign - "$APP_DIR"
 
 echo "App bundle ready at $APP_DIR"
 
