@@ -1,21 +1,19 @@
-name: CI
+name: CI — Build
 
 on:
-  push:
-    branches: [main]
   pull_request:
     branches: [main]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: ubuntu-latest
+    container:
+      image: swift:6.0
     steps:
       - uses: actions/checkout@v4
-
       - name: Build Swift package
         run: swift build --package-path ClaudePills
-
-      - name: Verify server dependencies
-        run: |
-          cd server
-          npm ci
