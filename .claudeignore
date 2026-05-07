@@ -1,0 +1,55 @@
+# Build artifacts
+.build/
+build/
+DerivedData/
+dist/
+
+# Xcode caches
+xcuserdata/
+*.xcuserstate
+.swiftpm/
+*.sdkstatcache
+*.swiftinterface-*
+Index.noindex/
+SDKStatCaches.noindex/
+ModuleCache.noindex/
+
+# Compiled outputs
+*.app
+*.dSYM
+*.dSYM.zip
+*.o
+*.a
+*.dylib
+
+# Node companion server (server/)
+node_modules/
+package-lock.json
+
+# Image / media assets
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.icns
+*.ico
+*.pdf
+
+# Lock files
+Package.resolved
+
+# Secrets
+.env
+.env.*
+*.p8
+*.p12
+*.mobileprovision
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
