@@ -59,7 +59,7 @@ Companion (outside the Swift app):
 
 ## Build
 
-`make` (in repo root) builds release, signs with Lumaru team if available, packages as `ClaudePills.app`, installs to `/Applications`. CI is manual-only (`workflow_dispatch`) per root CLAUDE.md.
+`make` (in repo root) builds release, signs with Lumaru team if available, packages as `ClaudePills.app`, installs to `/Applications`. No CI — local builds are the only gate.
 
 ## Test Suite Structure
 
